@@ -154,6 +154,7 @@ Everything worth tweaking is in one file. Open `obsidian-save.js` and adjust:
 | No files appear in the vault at all | Hook not firing. Open `/hooks` in Claude Code (reloads the settings watcher), or restart. Check `$TMPDIR/claude-save-error.log`. |
 | Settings seem to have "disappeared" after editing | You likely wrote malformed JSON or a flat `{ type, command }` under `Stop` instead of the `{ hooks: [...] }` wrapper. A single bad `settings.json` silently disables **every** setting in it. |
 | Blocks appear but look empty | Claude Code payload shape may have shifted in a new release. Run `head -n 5 <transcript_path>` on a fresh session to inspect the current block shape, then adjust `renderContent`. |
+| Last turn occasionally missing from a saved note | Stop hook can fire a few hundred ms before Claude Code flushes the latest assistant message to the JSONL — a race. The script handles this by polling: it compares the rendered tail against `last_assistant_message` from the hook payload and re-reads up to 5× / ~1s when behind. If you still see drops, raise the retry budget in `readTranscriptFresh`. |
 
 ## License
 

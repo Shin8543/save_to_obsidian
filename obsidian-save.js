@@ -114,6 +114,40 @@ function findExistingForSession(dir, sessionId) {
     return null;
 }
 
+// Synchronous sleep — used by the freshness poll. Blocks the event loop, but
+// the hook process exits right after writing so this is fine.
+function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Normalize text for prefix comparison (strip whitespace, control chars).
+function normalize(s) {
+    return (s || '').replace(/\s+/g, ' ').trim();
+}
+
+// Read the transcript with a short retry loop. Claude Code may fire the Stop
+// hook a few hundred ms before the latest assistant message is flushed to the
+// JSONL, which would silently drop the final turn from our archive. We compare
+// the freshly-read tail against `last_assistant_message` from the hook payload
+// (which always reflects the actual latest message) and re-read if behind.
+function readTranscriptFresh(transcriptPath, lastAssistantMessage) {
+    const expected = normalize(lastAssistantMessage).slice(0, 80);
+    const maxAttempts = expected ? 6 : 1; // ~1s budget when we have something to wait for
+    let result = readTranscript(transcriptPath);
+    for (let attempt = 1; attempt < maxAttempts; attempt++) {
+        if (!expected) break;
+        // Find the most recent assistant turn's rendered text.
+        const lastAssistant = [...result.turns].reverse().find(t => t.role === 'assistant');
+        const got = normalize(lastAssistant && lastAssistant.text);
+        // Match if the rendered turn text contains the expected prefix anywhere.
+        // (Renderer may prepend tool_use lines etc., so we don't anchor to start.)
+        if (got.includes(expected)) break;
+        sleepSync(200);
+        result = readTranscript(transcriptPath);
+    }
+    return result;
+}
+
 async function saveToObsidian() {
     let input = '';
     process.stdin.setEncoding('utf8');
@@ -126,12 +160,13 @@ async function saveToObsidian() {
             const cwd = sessionData.cwd || '';
             const sessionId = sessionData.session_id || '';
             const transcriptPath = sessionData.transcript_path;
+            const lastAssistantMessage = sessionData.last_assistant_message || '';
 
             let turns = [];
             let firstUserText = '';
             let firstTimestamp = '';
             if (transcriptPath && fs.existsSync(transcriptPath)) {
-                ({ turns, firstUserText, firstTimestamp } = readTranscript(transcriptPath));
+                ({ turns, firstUserText, firstTimestamp } = readTranscriptFresh(transcriptPath, lastAssistantMessage));
             }
 
             if (!fs.existsSync(OBSIDIAN_VAULT_PATH)) {
