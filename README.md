@@ -1,6 +1,8 @@
-# claude-save-to-obsidian
+# claude/codex-save-to-obsidian
 
 A tiny [Claude Code](https://claude.com/claude-code) **Stop hook** that archives every conversation to your Obsidian vault as a clean, incrementally-updated Markdown note.
+
+It also includes a companion Codex Desktop/CLI archiver. The Codex version is installed as an external watcher rather than by replacing Codex's `notify` command, so it can coexist with Codex Desktop plugins such as Computer Use.
 
 > One file per session. Re-opened sessions keep growing the same note. Titles are derived from your first prompt, and `thinking` / `tool_use` / `tool_result` blocks are rendered as collapsible Obsidian callouts so the log stays skimmable.
 
@@ -45,15 +47,15 @@ the actual answer text.
 ---
 ```
 
-## Install
+## Install: Claude Code
 
 ### 1. Get the script somewhere stable
 
 ```bash
-git clone https://github.com/<you>/claude-save-to-obsidian.git ~/.claude-save-to-obsidian
+git clone https://github.com/<you>/save_to_obsidian.git ~/.ai-save-to-obsidian
 ```
 
-Any path works — `~/.agent/`, `~/bin/`, wherever you keep scripts. The hook just needs to know where to find `obsidian-save.js`.
+Any path works — `~/.agent/`, `~/bin/`, wherever you keep scripts. The Claude hook just needs to know where to find `obsidian-save.js`.
 
 ### 2. Point it at your vault
 
@@ -71,7 +73,7 @@ Edit `~/.claude/settings.json` (user-level, applies to every project):
         "hooks": [
           {
             "type": "command",
-            "command": "CLAUDE_OBSIDIAN_VAULT=~/Obsidian/Vault/Claude_History node ~/.claude-save-to-obsidian/obsidian-save.js",
+            "command": "CLAUDE_OBSIDIAN_VAULT=~/Obsidian/Vault/Claude_History node ~/.ai-save-to-obsidian/obsidian-save.js",
             "timeout": 30
           }
         ]
@@ -95,7 +97,70 @@ ls -lt ~/Obsidian/Vault/Claude_History | head
 
 If nothing shows up, check `$TMPDIR/claude-save-error.log` — the script catches every error there.
 
+## Install: Codex Desktop/CLI
+
+Codex stores sessions under `~/.codex/sessions/YYYY/MM/DD/rollout-...jsonl` and keeps a session index at `~/.codex/session_index.jsonl`. The Codex archiver reads those files directly and writes one Markdown note per session.
+
+> Do not replace Codex Desktop's existing `notify` setting just to run this script. Some Codex Desktop plugins use `notify` for their own lifecycle hooks. The recommended setup is a user-level LaunchAgent on macOS that watches the Codex session index and runs the saver out of band.
+
+### 1. Put the script somewhere stable
+
+```bash
+git clone https://github.com/<you>/save_to_obsidian.git ~/.ai-save-to-obsidian
+```
+
+The Codex script is `codex-obsidian-save.js`.
+
+### 2. Point it at your vault
+
+Set `CODEX_OBSIDIAN_VAULT` when invoking the script. If nothing is set, it defaults to `~/CodexHistory`.
+
+For a manual smoke test:
+
+```bash
+CODEX_OBSIDIAN_VAULT=~/Obsidian/Vault/CodexHistory node ~/.ai-save-to-obsidian/codex-obsidian-save.js --background-save
+```
+
+### 3. Install the LaunchAgent
+
+Copy the template:
+
+```bash
+cp ~/.ai-save-to-obsidian/launchagents/com.example.codex-obsidian-save.plist ~/Library/LaunchAgents/com.example.codex-obsidian-save.plist
+```
+
+Edit the copied plist and replace all placeholders:
+
+| Placeholder | Replace with |
+|---|---|
+| `/path/to/node` | Output of `command -v node`, for example `/usr/local/bin/node` |
+| `/path/to/codex-obsidian-save.js` | Absolute path to `codex-obsidian-save.js` |
+| `/path/to/home/.codex/session_index.jsonl` | Absolute path to your Codex `session_index.jsonl` |
+| `/path/to/tmp/...` | A writable log path such as `/tmp/...` or another temp directory |
+
+If you want a custom vault path, add an `EnvironmentVariables` block to the plist:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+  <key>CODEX_OBSIDIAN_VAULT</key>
+  <string>/path/to/Obsidian/Vault/CodexHistory</string>
+</dict>
+```
+
+Load and verify:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.codex-obsidian-save.plist
+launchctl kickstart -k gui/$(id -u)/com.example.codex-obsidian-save
+launchctl print gui/$(id -u)/com.example.codex-obsidian-save
+```
+
+The debug log path is controlled by the copied plist's `StandardOutPath` / `StandardErrorPath`; script-level errors go to `$TMPDIR/codex-save-error.log`.
+
 ## How it works
+
+### Claude Code
 
 **The Stop-hook payload does not contain the transcript inline.** Claude Code only sends:
 
@@ -122,6 +187,27 @@ The real conversation lives at `transcript_path` as JSONL, one event per line. T
    - If not → create `<start-date>_<slug>__<session_id>.md`
 5. Writes frontmatter with `date` (start), `updated` (now), `cwd`, `session_id`, and a `# <slug>` heading
 
+### Codex
+
+Codex session files are JSONL rollouts. The script:
+
+1. Scans `CODEX_HOME` (defaults to `~/.codex`) for `sessions/**/rollout-*.jsonl` and `archived_sessions/*.jsonl`
+2. Deduplicates by session id and chooses the newest copy
+3. Reads `session_index.jsonl` to use Codex's thread title when available
+4. Keeps `response_item.payload.type === "message"` entries with `role: "user"` or `"assistant"`
+5. Skips synthetic environment/skill payloads so the note is mostly human conversation
+6. Rewrites the existing `*__<session_id>.md` note if present, or creates a new note otherwise
+
+The Codex script also accepts:
+
+```bash
+node codex-obsidian-save.js --background-save
+node codex-obsidian-save.js --file /path/to/rollout.jsonl
+node codex-obsidian-save.js --session <session-id>
+node codex-obsidian-save.js --all
+node codex-obsidian-save.js --all --days 7
+```
+
 ### About the title
 
 Claude Code's auto-generated session title (shown in the tab / topic bar) is computed **server-side** and is not persisted anywhere in `~/.claude/` that a hook can read. This script therefore derives a slug from your first user prompt:
@@ -146,6 +232,16 @@ Everything worth tweaking is in one file. Open `obsidian-save.js` and adjust:
 | Skip short sessions | inside `process.stdin.on('end', ...)` | add `if (turns.length < N) return;` |
 | Include subagent traffic | `readTranscript` | remove the `if (entry.isSidechain) continue;` guard (makes files much larger) |
 
+For `codex-obsidian-save.js`:
+
+| What | Where | How |
+|---|---|---|
+| Vault path | environment | `CODEX_OBSIDIAN_VAULT=/path/to/CodexHistory` |
+| Codex home | environment | `CODEX_HOME=/path/to/.codex` |
+| Save delay | environment | `CODEX_OBSIDIAN_NOTIFY_DELAY_MS=5000` |
+| Include tool calls/results | environment | `CODEX_OBSIDIAN_INCLUDE_TOOLS=1` |
+| Role headings | `writeNote` → `heading` | change `User` / `Codex` headings |
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -155,6 +251,8 @@ Everything worth tweaking is in one file. Open `obsidian-save.js` and adjust:
 | Settings seem to have "disappeared" after editing | You likely wrote malformed JSON or a flat `{ type, command }` under `Stop` instead of the `{ hooks: [...] }` wrapper. A single bad `settings.json` silently disables **every** setting in it. |
 | Blocks appear but look empty | Claude Code payload shape may have shifted in a new release. Run `head -n 5 <transcript_path>` on a fresh session to inspect the current block shape, then adjust `renderContent`. |
 | Last turn occasionally missing from a saved note | Stop hook can fire a few hundred ms before Claude Code flushes the latest assistant message to the JSONL — a race. The script handles this by polling: it compares the rendered tail against `last_assistant_message` from the hook payload and re-reads up to 5× / ~1s when behind. If you still see drops, raise the retry budget in `readTranscriptFresh`. |
+| Codex note does not update | Confirm the LaunchAgent is loaded with `launchctl print gui/$(id -u)/com.example.codex-obsidian-save`, then check `$TMPDIR/codex-save-error.log` and the plist's stdout/stderr paths. |
+| Codex Desktop reports plugin/Computer Use shutdown errors | Do not replace Codex's existing `notify` with the Obsidian script. Restore the plugin's original `notify` entry and use the LaunchAgent watcher instead. |
 
 ## License
 
