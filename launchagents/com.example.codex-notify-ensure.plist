@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.codex-notify-ensure</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/node</string>
+    <string>/path/to/codex-notify-ensure.js</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CODEX_CONFIG_PATH</key>
+    <string>/path/to/home/.codex/config.toml</string>
+    <key>CODEX_NOTIFY_WRAPPER</key>
+    <string>/path/to/codex-notify-wrapper.sh</string>
+  </dict>
+
+  <key>WatchPaths</key>
+  <array>
+    <string>/path/to/home/.codex/config.toml</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>2</integer>
+
+  <key>StandardOutPath</key>
+  <string>/path/to/tmp/codex-notify-ensure.out</string>
+
+  <key>StandardErrorPath</key>
+  <string>/path/to/tmp/codex-notify-ensure.err</string>
+</dict>
+</plist>

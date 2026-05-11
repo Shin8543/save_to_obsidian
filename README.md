@@ -150,7 +150,39 @@ export CODEX_NOTIFY_FORWARD="/path/to/existing-notify-command arg1 arg2"
 
 The wrapper automatically forwards to Codex Desktop's bundled Computer Use notifier when installed under the standard Codex plugin cache. Script-level errors go to `$TMPDIR/codex-save-error.log`, and debug messages go to `$TMPDIR/codex-obsidian-save-debug.log`.
 
-### 4. Verify
+### 4. Optional: install the self-healing config watcher
+
+Codex Desktop plugins may rewrite `~/.codex/config.toml` during updates. If that rewrite replaces the wrapper with a versioned Computer Use path, the path can go stale after the next plugin update and final turns may stop saving.
+
+`codex-notify-ensure.js` repairs this automatically: whenever `config.toml` changes, it rewrites the `notify` line back to your stable `codex-notify-wrapper.sh` path.
+
+Copy the LaunchAgent template:
+
+```bash
+cp ~/.ai-save-to-obsidian/launchagents/com.example.codex-notify-ensure.plist ~/Library/LaunchAgents/com.example.codex-notify-ensure.plist
+```
+
+Edit the copied plist and replace all placeholders:
+
+| Placeholder | Replace with |
+|---|---|
+| `/path/to/node` | Output of `command -v node`, for example `/usr/local/bin/node` |
+| `/path/to/codex-notify-ensure.js` | Absolute path to `codex-notify-ensure.js` |
+| `/path/to/codex-notify-wrapper.sh` | Absolute path to `codex-notify-wrapper.sh` |
+| `/path/to/home/.codex/config.toml` | Absolute path to your Codex config file |
+| `/path/to/tmp/...` | Writable stdout/stderr log paths |
+
+Load it:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.codex-notify-ensure.plist
+launchctl kickstart -k gui/$(id -u)/com.example.codex-notify-ensure
+launchctl print gui/$(id -u)/com.example.codex-notify-ensure
+```
+
+The repair log is written to `$TMPDIR/codex-notify-ensure.log`.
+
+### 5. Verify
 
 Start a Codex session, send a short message, and wait a few seconds after the response finishes. A file should appear or update in your Codex history folder:
 
@@ -208,6 +240,14 @@ node codex-obsidian-save.js --all
 node codex-obsidian-save.js --all --days 7
 ```
 
+`codex-notify-wrapper.sh` intentionally keeps the `notify` path stable and does not hard-code a Computer Use version. On each turn, it:
+
+1. Starts `codex-obsidian-save.js --notify`, which immediately launches a detached delayed save
+2. Looks for the newest bundled Computer Use notification client under `CODEX_HOME`
+3. Forwards `turn-ended` to that client if present
+
+`codex-notify-ensure.js` is separate and optional. It does not save transcripts. It only watches for config rewrites and restores the stable wrapper path.
+
 ### About the title
 
 Claude Code's auto-generated session title (shown in the tab / topic bar) is computed **server-side** and is not persisted anywhere in `~/.claude/` that a hook can read. This script therefore derives a slug from your first user prompt:
@@ -241,6 +281,8 @@ For `codex-obsidian-save.js`:
 | Save delay | environment | `CODEX_OBSIDIAN_NOTIFY_DELAY_MS=5000` |
 | Include tool calls/results | environment | `CODEX_OBSIDIAN_INCLUDE_TOOLS=1` |
 | Existing notify command | environment | `CODEX_NOTIFY_FORWARD="/path/to/notify args"` |
+| Config path for self-healing | environment | `CODEX_CONFIG_PATH=/path/to/config.toml` |
+| Wrapper path for self-healing | environment | `CODEX_NOTIFY_WRAPPER=/path/to/codex-notify-wrapper.sh` |
 | Role headings | `writeNote` → `heading` | change `User` / `Codex` headings |
 
 ## Troubleshooting
@@ -254,6 +296,7 @@ For `codex-obsidian-save.js`:
 | Last turn occasionally missing from a saved note | Stop hook can fire a few hundred ms before Claude Code flushes the latest assistant message to the JSONL — a race. The script handles this by polling: it compares the rendered tail against `last_assistant_message` from the hook payload and re-reads up to 5× / ~1s when behind. If you still see drops, raise the retry budget in `readTranscriptFresh`. |
 | Codex note only contains the first few messages | Do not rely on a LaunchAgent watching `~/.codex/session_index.jsonl`; that file may update only when the session title/index changes. Use `codex-notify-wrapper.sh` so every Codex turn triggers a delayed background save. |
 | Codex note does not update | Confirm `~/.codex/config.toml` points `notify` at `codex-notify-wrapper.sh`, confirm the wrapper is executable, then check `$TMPDIR/codex-save-error.log` and `$TMPDIR/codex-obsidian-save-debug.log`. |
+| Codex or Computer Use updates keep changing `notify` | Install the `codex-notify-ensure.js` LaunchAgent. It watches `config.toml` and restores the stable wrapper path after rewrites. |
 | Codex Desktop reports plugin/Computer Use shutdown errors | Make sure `notify` points at `codex-notify-wrapper.sh`, not directly at `codex-obsidian-save.js`. The wrapper preserves the Computer Use notification path when the bundled plugin is installed. |
 
 ## License
